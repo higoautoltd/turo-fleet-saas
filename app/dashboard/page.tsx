@@ -21,8 +21,10 @@ const TRANSACTION_TYPES = [
 
 type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+// 获取当前本地时间，精确到分钟，用于默认填充表单
+function currentDateTimeLocal() {
+  const tzoffset = (new Date()).getTimezoneOffset() * 60000;
+  return new Date(Date.now() - tzoffset).toISOString().slice(0, 16);
 }
 
 export default function DashboardPage() {
@@ -34,10 +36,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   
-  // 新增：用于存储从数据库拉取的所有账单数据
   const [transactions, setTransactions] = useState<any[]>([]);
   
-  const [date, setDate] = useState(todayIsoDate);
+  const [date, setDate] = useState(currentDateTimeLocal);
   const [vehicle, setVehicle] = useState<(typeof VEHICLES)[number]>(VEHICLES[0]);
   const [type, setType] = useState<TransactionType>("Trip Revenue");
   const [amount, setAmount] = useState("");
@@ -47,17 +48,14 @@ export default function DashboardPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
 
-  // 新增：从数据库拉取当前用户数据的函数
   async function fetchTransactions(uid: string) {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("turo_transactions")
       .select("*")
       .eq("user_id", uid)
-      .order("date", { ascending: false }); // 按日期倒序排列
+      .order("date", { ascending: false });
     
-    if (data) {
-      setTransactions(data);
-    }
+    if (data) setTransactions(data);
   }
 
   useEffect(() => {
@@ -75,17 +73,13 @@ export default function DashboardPage() {
       if (!cancelled) {
         setEmail(session.user.email ?? null);
         setUserId(session.user.id);
-        // 登录成功后，立刻拉取数据
         await fetchTransactions(session.user.id);
         setLoading(false);
       }
     }
 
     void loadSession();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [router]);
 
   useEffect(() => {
@@ -109,7 +103,7 @@ export default function DashboardPage() {
   }
 
   function resetForm() {
-    setDate(todayIsoDate());
+    setDate(currentDateTimeLocal());
     setVehicle(VEHICLES[0]);
     setType("Trip Revenue");
     setAmount("");
@@ -134,19 +128,18 @@ export default function DashboardPage() {
       const numericAmount = parseFloat(amount);
       if (isNaN(numericAmount) || numericAmount <= 0) throw new Error("请输入有效的金额。");
 
+      // 为了确保时区正确，转换为标准 ISO 格式存入数据库
+      const isoDate = new Date(date).toISOString();
+
       const { error: insertError } = await supabase
         .from("turo_transactions") 
-        .insert([{ user_id: userId, date, vehicle, type, amount: numericAmount, notes }]);
+        .insert([{ user_id: userId, date: isoDate, vehicle, type, amount: numericAmount, notes }]);
 
       if (insertError) throw insertError;
 
       setSubmitSuccess("记账成功！");
-      // 提交成功后，重新拉取最新数据，让首页金额实时跳动！
       await fetchTransactions(userId);
-      
-      setTimeout(() => {
-        closeDrawer();
-      }, 1500);
+      setTimeout(() => closeDrawer(), 1500);
 
     } catch (err: any) {
       setSubmitError(err.message || "保存失败，请稍后再试。");
@@ -155,7 +148,27 @@ export default function DashboardPage() {
     }
   }
 
-  // 新增：自动计算财务数据
+  // 新增：删除账单功能
+  async function handleDelete(id: number) {
+    if (!window.confirm("确定要删除这条记录吗？这会影响你的利润计算。")) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("turo_transactions")
+        .delete()
+        .eq("id", id);
+        
+      if (error) throw error;
+      
+      // 删除成功后，刷新列表和金额
+      if (userId) await fetchTransactions(userId);
+    } catch (err: any) {
+      alert("删除失败: " + err.message);
+    }
+  }
+
   const tripRevenue = transactions
     .filter((t) => t.type === "Trip Revenue")
     .reduce((sum, t) => sum + Number(t.amount), 0);
@@ -203,7 +216,6 @@ export default function DashboardPage() {
           </button>
         </header>
 
-        {/* 核心看板：现在显示的是真实的计算数据！ */}
         <section className="mt-8 grid gap-4 sm:grid-cols-3">
           <article className="rounded-3xl border border-white/10 bg-white/[0.03] px-5 py-5">
             <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Net Profit</p>
@@ -225,7 +237,6 @@ export default function DashboardPage() {
           </article>
         </section>
 
-        {/* 记账按钮 */}
         <section className="mt-12 flex flex-col items-center justify-center py-6">
           <button
             type="button"
@@ -239,40 +250,54 @@ export default function DashboardPage() {
           </button>
         </section>
 
-        {/* 账单明细列表 */}
         <section className="mt-12">
           <h2 className="mb-6 text-lg font-medium text-white">Recent Transactions</h2>
           {transactions.length === 0 ? (
             <p className="text-sm text-zinc-500">No entries yet. Log the first trip or expense to start the ledger.</p>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.02]">
               <table className="w-full text-left text-sm text-zinc-400">
                 <thead className="border-b border-white/5 bg-white/[0.02] text-xs uppercase tracking-wider text-zinc-500">
                   <tr>
-                    <th className="px-6 py-4 font-medium">Date</th>
+                    <th className="px-6 py-4 font-medium whitespace-nowrap">Date & Time</th>
                     <th className="px-6 py-4 font-medium">Vehicle</th>
                     <th className="px-6 py-4 font-medium">Category</th>
                     <th className="px-6 py-4 font-medium">Notes</th>
                     <th className="px-6 py-4 font-medium text-right">Amount</th>
+                    <th className="px-6 py-4 font-medium text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {transactions.map((tx) => (
                     <tr key={tx.id} className="transition hover:bg-white/[0.02]">
-                      <td className="px-6 py-4">{tx.date}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-zinc-300">
+                        {/* 将时间格式化显示 */}
+                        {new Date(tx.date).toLocaleString([], { 
+                          year: 'numeric', month: '2-digit', day: '2-digit', 
+                          hour: '2-digit', minute: '2-digit'
+                        })}
+                      </td>
                       <td className="px-6 py-4 font-mono text-zinc-300">{tx.vehicle}</td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
                           tx.type === "Trip Revenue" ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-zinc-300"
                         }`}>
                           {tx.type}
                         </span>
                       </td>
-                      <td className="px-6 py-4 max-w-[200px] truncate">{tx.notes || "-"}</td>
+                      <td className="px-6 py-4 max-w-[150px] truncate">{tx.notes || "-"}</td>
                       <td className={`px-6 py-4 text-right font-mono font-medium ${
                         tx.type === "Trip Revenue" ? "text-emerald-400" : "text-zinc-200"
                       }`}>
                         {tx.type === "Trip Revenue" ? "+" : "-"}${Number(tx.amount).toFixed(2)}
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          onClick={() => handleDelete(tx.id)}
+                          className="text-xs font-medium text-zinc-500 transition hover:text-red-400 hover:underline"
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -315,13 +340,14 @@ export default function DashboardPage() {
           <form onSubmit={handleSubmit} className="flex flex-1 flex-col overflow-y-auto px-6 py-6">
             <div className="space-y-5">
               <div>
-                <label className="mb-2 block text-sm font-medium text-zinc-400">Date</label>
+                <label className="mb-2 block text-sm font-medium text-zinc-400">Date & Time</label>
+                {/* 这里改成了 datetime-local，现在可以选几点几分了 */}
                 <input
-                  type="date"
+                  type="datetime-local"
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10"
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10 [color-scheme:dark]"
                 />
               </div>
 
