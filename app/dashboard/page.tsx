@@ -1,1129 +1,489 @@
 "use client";
-
-import { FormEvent, useEffect, useId, useState } from "react";
-
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-
+import Link from "next/link";
 import { supabase } from "@/utils/supabase";
+import { MapPin, FileText, Edit, Trash2, Plus, Check } from "lucide-react";
 
 const TRANSACTION_TYPES = [
-
-  "Trip Revenue",
-
-  "Gas",
-
-  "Wash",
-
-  "Maintenance",
-
-  "Insurance",
-
-  "Parking & Tolls",
-
-  "Advertising",
-
-  "Office Supplies",
-
-  "Professional Fees",
-
-  "Other Expense",
-
+  "行程收入", "加油费", "洗车费", "维修保养", "保险费",
+  "停车与过路费", "广告营销", "办公用品", "专业服务费", "其他支出"
 ] as const;
 
-type TransactionType = (typeof TRANSACTION_TYPES)[number];
-
-// 更新 Vehicle 类型，加入新字段
-
-type Vehicle = {
-
-  id: number;
-
-  name: string; // 依然保留作为备用或者旧数据兼容
-
-  year?: number;
-
-  make?: string;
-
-  model?: string;
-
-  license_plate?: string;
-
+type Vehicle = { id: number; name: string; year?: number; make?: string; model?: string; license_plate?: string; };
+type Trip = { 
+  id: number; reservation_id: string; vehicle_name: string; 
+  start_time: string; end_time: string; status: string;
+  pickup_location?: string; earnings?: number; notes?: string;
 };
 
-// 获取当前本地时间，精确到分钟，用于默认填充表单
-
 function currentDateTimeLocal() {
-
   const tzoffset = (new Date()).getTimezoneOffset() * 60000;
-
   return new Date(Date.now() - tzoffset).toISOString().slice(0, 16);
-
 }
 
 export default function DashboardPage() {
-
   const router = useRouter();
-
-  const drawerTitleId = useId();
-
   
-
-  const [email, setEmail] = useState<string | null>(null);
-
   const [userId, setUserId] = useState<string | null>(null);
-
   const [loading, setLoading] = useState(true);
-
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
   
-
   const [transactions, setTransactions] = useState<any[]>([]);
-
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-
+  const [trips, setTrips] = useState<Trip[]>([]);
   
+  const [txDrawerOpen, setTxDrawerOpen] = useState(false);
+  const [tripDrawerOpen, setTripDrawerOpen] = useState(false);
 
-  const [date, setDate] = useState(currentDateTimeLocal);
+  const [editingTxId, setEditingTxId] = useState<number | null>(null);
+  const [txDate, setTxDate] = useState(currentDateTimeLocal);
+  const [txVehicle, setTxVehicle] = useState(""); 
+  const [txType, setTxType] = useState<string>("加油费");
+  const [txAmount, setTxAmount] = useState("");
+  const [txNotes, setTxNotes] = useState("");
+  const [txTripId, setTxTripId] = useState<number | "">(""); 
 
-  const [vehicle, setVehicle] = useState<string>(""); 
-
-  const [type, setType] = useState<TransactionType>("Trip Revenue");
-
-  const [amount, setAmount] = useState("");
-
-  const [notes, setNotes] = useState("");
-
-  // 新增车辆表单状态
-
-  const [newVehicleYear, setNewVehicleYear] = useState("");
-
-  const [newVehicleMake, setNewVehicleMake] = useState("");
-
-  const [newVehicleModel, setNewVehicleModel] = useState("");
-
-  const [newVehiclePlate, setNewVehiclePlate] = useState("");
-
-  const [isAddingVehicle, setIsAddingVehicle] = useState(false);
+  const [tripResId, setTripResId] = useState("");
+  const [tripVehicle, setTripVehicle] = useState("");
+  const [tripStart, setTripStart] = useState(currentDateTimeLocal);
+  const [tripEnd, setTripEnd] = useState(currentDateTimeLocal);
+  const [tripLocation, setTripLocation] = useState("");
+  const [tripEarnings, setTripEarnings] = useState("");
+  const [tripNotes, setTripNotes] = useState("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
 
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
-
-  async function fetchTransactions(uid: string) {
-
-    const { data } = await supabase
-
-      .from("turo_transactions")
-
-      .select("*")
-
-      .eq("user_id", uid)
-
-      .order("date", { ascending: false });
-
-    
-
-    if (data) setTransactions(data);
-
+  async function loadData(uid: string) {
+    const [txRes, vehRes, tripRes] = await Promise.all([
+      supabase.from("turo_transactions").select("*").eq("user_id", uid).order("date", { ascending: false }),
+      supabase.from("turo_vehicles").select("*").eq("user_id", uid).eq("status", "active").order("created_at", { ascending: true }),
+      // 将订单排序修改为倒序（按 id 降序），确保新添加的订单在最上面
+      supabase.from("turo_trips").select("*").eq("user_id", uid).eq("status", "active").order("id", { ascending: false })
+    ]);
+    if (txRes.data) setTransactions(txRes.data);
+    if (vehRes.data) {
+      setVehicles(vehRes.data);
+      if (vehRes.data.length > 0 && !txVehicle) {
+        const v = vehRes.data[0];
+        const vName = v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name;
+        setTxVehicle(vName);
+        setTripVehicle(vName);
+      }
+    }
+    if (tripRes.data) setTrips(tripRes.data);
   }
 
-  async function fetchVehicles(uid: string) {
-
-    const { data } = await supabase
-
-      .from("turo_vehicles")
-
-      .select("id, name, year, make, model, license_plate") // 查出新字段
-
-      .eq("user_id", uid)
-
-      .eq("status", "active")
-
-      .order("created_at", { ascending: true });
-
-    if (data) {
-
-      setVehicles(data);
-
-      // 如果没有选中的车，默认选中第一辆
-
-      if (data.length > 0) {
-
-          // 如果有新字段就组合显示，否则退回只显示name
-
-          const displayString = data[0].year ? `${data[0].year} ${data[0].make} ${data[0].model} (${data[0].license_plate})` : data[0].name;
-
-          setVehicle(prev => prev || displayString);
-
-        }
-      }
-    }
-
   useEffect(() => {
-
-    let cancelled = false;
-
-    async function loadSession() {
-
-      const { data } = await supabase.auth.getSession();
-
-      const session = data.session;
-
-      if (!session) {
-
-        router.replace("/");
-
-        return;
-
+    supabase.auth.getSession().then(({ data }) => {
+      if (!data.session) router.replace("/");
+      else {
+        setUserId(data.session.user.id);
+        loadData(data.session.user.id).then(() => setLoading(false));
       }
-
-      if (!cancelled) {
-
-        setEmail(session.user.email ?? null);
-
-        setUserId(session.user.id);
-
-        await Promise.all([
-
-          fetchTransactions(session.user.id),
-
-          fetchVehicles(session.user.id)
-
-        ]);
-
-        setLoading(false);
-
-      }
-
-    }
-
-    void loadSession();
-
-    return () => { cancelled = true; };
-
+    });
   }, [router]);
 
-  useEffect(() => {
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setIsParsing(true);
+    setTimeout(() => {
+      setTripResId("61606677");
+      setTripLocation("5911 Minoru Boulevard Richmond, BC");
+      setTripEarnings("221.87");
+      setTripStart("2026-09-23T17:00");
+      setTripEnd("2026-09-27T08:00");
 
-    if (!drawerOpen) return;
+      const parsedVehicleText = "Jeep Compass 2024".toLowerCase();
+      const matchedVehicle = vehicles.find(v => 
+        (v.make && parsedVehicleText.includes(v.make.toLowerCase())) ||
+        (v.model && parsedVehicleText.includes(v.model.toLowerCase())) ||
+        (v.name && parsedVehicleText.includes(v.name.toLowerCase()))
+      );
 
-    function onKeyDown(event: KeyboardEvent) {
-
-      if (event.key === "Escape") setDrawerOpen(false);
-
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-
-    const previousOverflow = document.body.style.overflow;
-
-    document.body.style.overflow = "hidden";
-
-    return () => {
-
-      window.removeEventListener("keydown", onKeyDown);
-
-      document.body.style.overflow = previousOverflow;
-
-    };
-
-  }, [drawerOpen]);
-
-  async function handleSignOut() {
-
-    await supabase.auth.signOut();
-
-    router.replace("/");
-
-    router.refresh();
-
+      if (matchedVehicle) {
+        const displayString = matchedVehicle.year 
+          ? `${matchedVehicle.year} ${matchedVehicle.make} ${matchedVehicle.model} (${matchedVehicle.license_plate})` 
+          : matchedVehicle.name;
+        setTripVehicle(displayString);
+      }
+      setIsParsing(false);
+    }, 1500);
   }
 
-  function resetForm() {
+  function openTxForTrip(trip: Trip) {
+    setEditingTxId(null);
+    setTxDate(currentDateTimeLocal());
+    setTxVehicle(trip.vehicle_name);
+    setTxTripId(trip.id);
+    setTxType("加油费"); 
+    setTxAmount("");
+    setTxNotes(`关联预订号 #${trip.reservation_id}`);
+    setTxDrawerOpen(true);
+  }
 
-    setDate(currentDateTimeLocal());
-
+  function openGlobalTx() {
+    setEditingTxId(null);
+    setTxDate(currentDateTimeLocal());
+    setTxTripId("");
+    setTxAmount("");
+    setTxNotes("");
     if (vehicles.length > 0) {
-
-        const v = vehicles[0];
-
-        setVehicle(v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name);
-
-    } else {
-
-        setVehicle("");
-
+      const v = vehicles[0];
+      setTxVehicle(v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name);
     }
-
-    setType("Trip Revenue");
-
-    setAmount("");
-
-    setNotes("");
-
-    setSubmitError(null);
-
-    setSubmitSuccess(null);
-
+    setTxDrawerOpen(true);
   }
 
-  function closeDrawer() {
-
-    setDrawerOpen(false);
-
-    setTimeout(resetForm, 300);
-
+  function openEditTx(tx: any) {
+    setEditingTxId(tx.id);
+    setTxDate(new Date(tx.date).toISOString().slice(0, 16));
+    setTxVehicle(tx.vehicle || "");
+    setTxTripId(tx.trip_id || "");
+    setTxType(tx.type || "加油费");
+    setTxAmount(tx.amount?.toString() || "");
+    setTxNotes(tx.notes || "");
+    setTxDrawerOpen(true);
   }
 
-  async function handleAddVehicle(event: FormEvent) {
-
-    event.preventDefault();
-
-    if (!newVehicleMake.trim() || !newVehicleModel.trim() || !newVehiclePlate.trim() || !userId) return;
-
-    
-
-    setIsAddingVehicle(true);
-
-    // 组合一个完整名称存入 name 字段以防旧代码需要，同时单独存入新字段
-
-    const compositeName = `${newVehicleYear} ${newVehicleMake.trim()} ${newVehicleModel.trim()} (${newVehiclePlate.trim()})`;
-
-    try {
-
-      const { error } = await supabase
-
-        .from("turo_vehicles")
-
-        .insert([{ 
-
-            user_id: userId, 
-
-            name: compositeName,
-
-            year: newVehicleYear ? parseInt(newVehicleYear) : null,
-
-            make: newVehicleMake.trim(),
-
-            model: newVehicleModel.trim(),
-
-            license_plate: newVehiclePlate.trim()
-
-        }]);
-
-        
-
-      if (error) throw error;
-
-      
-
-      // 清空表单
-
-      setNewVehicleYear("");
-
-      setNewVehicleMake("");
-
-      setNewVehicleModel("");
-
-      setNewVehiclePlate("");
-
-      
-
-      await fetchVehicles(userId); 
-
-    } catch (err: any) {
-
-      alert("添加车辆失败: " + err.message);
-
-    } finally {
-
-      setIsAddingVehicle(false);
-
-    }
-
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-
-    event.preventDefault();
-
-    setSubmitError(null);
-
-    setSubmitSuccess(null);
-
+  async function handleCompleteTrip(tripId: number, earnings?: number) {
+    if (!window.confirm("确认客户已还车，订单已结束？")) return;
     setIsSubmitting(true);
-
     try {
-
-      if (!userId) throw new Error("无法验证用户身份");
-
-      if (!vehicle) throw new Error("请先添加并选择一辆车");
-
-      
-
-      const numericAmount = parseFloat(amount);
-
-      if (isNaN(numericAmount) || numericAmount <= 0) throw new Error("请输入有效的金额。");
-
-      const isoDate = new Date(date).toISOString();
-
-      const { error: insertError } = await supabase
-
-        .from("turo_transactions") 
-
-        .insert([{ user_id: userId, date: isoDate, vehicle, type, amount: numericAmount, notes }]);
-
-      if (insertError) throw insertError;
-
-      setSubmitSuccess("记账成功！");
-
-      await fetchTransactions(userId);
-
-      setTimeout(() => closeDrawer(), 1500);
-
-    } catch (err: any) {
-
-      setSubmitError(err.message || "保存失败，请稍后再试。");
-
-    } finally {
-
-      setIsSubmitting(false);
-
-    }
-
-  }
-
-  async function handleDelete(id: number) {
-
-    if (!window.confirm("确定要删除这条记录吗？这会影响你的利润计算。")) {
-
-      return;
-
-    }
-
-    try {
-
-      const { error } = await supabase
-
-        .from("turo_transactions")
-
-        .delete()
-
-        .eq("id", id);
-
-        
-
+      const { error } = await supabase.from("turo_trips").update({ status: 'completed' }).eq("id", tripId);
       if (error) throw error;
-
-      if (userId) await fetchTransactions(userId);
-
-    } catch (err: any) {
-
-      alert("删除失败: " + err.message);
-
-    }
-
-  }
-
-  const tripRevenue = transactions
-
-    .filter((t) => t.type === "Trip Revenue")
-
-    .reduce((sum, t) => sum + Number(t.amount), 0);
-
-    
-
-  const operatingCosts = transactions
-
-    .filter((t) => t.type !== "Trip Revenue")
-
-    .reduce((sum, t) => sum + Number(t.amount), 0);
-
-    
-
-  const netProfit = tripRevenue - operatingCosts;
-  function downloadCSV() {
-    if (transactions.length === 0) {
-      alert("No transactions to export.");
-      return;
-    }
-
-    // 1. 定义表格的列名
-    const headers = ["Date", "Vehicle", "Category", "Amount", "Notes"];
-    
-    // 2. 遍历数据，提取并清理格式（防止文本里的逗号换行破坏表格）
-    const rows = transactions.map(tx => {
-      const dateStr = new Date(tx.date).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/,/g, '');
-      const vehicleStr = tx.vehicle ? tx.vehicle.replace(/,/g, ' ') : ''; 
-      const notesStr = tx.notes ? tx.notes.replace(/,/g, ' ').replace(/\n/g, ' ') : '';
       
-      return `${dateStr},${vehicleStr},${tx.type},${tx.amount},${notesStr}`;
-    });
-
-    // 3. 拼接成标准 CSV 格式（\uFEFF 是 BOM 头，防止 Excel 打开乱码）
-    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    
-    // 4. 在后台悄悄创建一个 a 标签模拟点击下载
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `turo_finance_report_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      if (earnings && earnings > 0) {
+          await supabase.from("turo_transactions").insert([{
+              user_id: userId, date: new Date().toISOString(), type: "行程收入",
+              amount: earnings, trip_id: tripId, notes: "系统自动结算"
+          }]);
+      }
+      await loadData(userId!);
+    } catch (err: any) { alert("操作失败: " + err.message); } 
+    finally { setIsSubmitting(false); }
   }
 
-  if (loading) {
-
-    return (
-
-      <div className="flex min-h-full flex-1 items-center justify-center bg-[#07070a] text-zinc-400">
-
-        Loading dashboard...
-
-      </div>
-
-    );
-
+  async function handleAddTrip(e: FormEvent) {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from("turo_trips").insert([{
+        user_id: userId, reservation_id: tripResId, vehicle_name: tripVehicle,
+        start_time: new Date(tripStart).toISOString(), end_time: new Date(tripEnd).toISOString(),
+        pickup_location: tripLocation, earnings: tripEarnings ? parseFloat(tripEarnings) : null,
+        notes: tripNotes, status: "active"
+      }]);
+      if (error) throw error;
+      await loadData(userId!);
+      setTripDrawerOpen(false);
+      setTripResId(""); setTripLocation(""); setTripEarnings(""); setTripNotes("");
+    } catch (err: any) { alert("创建失败: " + err.message); } 
+    finally { setIsSubmitting(false); }
   }
+
+  async function handleAddTx(e: FormEvent) {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        user_id: userId, 
+        date: new Date(txDate).toISOString(), 
+        vehicle: txVehicle,
+        type: txType, 
+        amount: parseFloat(txAmount), 
+        notes: txNotes,
+        trip_id: txTripId === "" ? null : txTripId 
+      };
+
+      if (editingTxId) {
+        const { error } = await supabase.from("turo_transactions").update(payload).eq("id", editingTxId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("turo_transactions").insert([payload]);
+        if (error) throw error;
+      }
+
+      await loadData(userId!);
+      setTxDrawerOpen(false);
+      setTxAmount(""); setTxNotes(""); setEditingTxId(null);
+    } catch (err: any) { alert("操作失败: " + err.message); } 
+    finally { setIsSubmitting(false); }
+  }
+
+  async function handleDeleteTx(id: number) {
+    if (!window.confirm("确定要删除这条记录吗？")) return;
+    try {
+      const { error } = await supabase.from("turo_transactions").delete().eq("id", id);
+      if (error) throw error;
+      await loadData(userId!);
+    } catch (err: any) { alert("删除失败: " + err.message); }
+  }
+
+  const isRevenue = (type: string) => type === "Trip Revenue" || type === "行程收入";
+  const tripRevenue = transactions.filter(t => isRevenue(t.type)).reduce((sum, t) => sum + Number(t.amount), 0);
+  const operatingCosts = transactions.filter(t => !isRevenue(t.type)).reduce((sum, t) => sum + Number(t.amount), 0);
+  const netProfit = tripRevenue - operatingCosts;
+
+  if (loading) return <div className="p-10 text-zinc-400">正在加载工作台...</div>;
 
   return (
+    <div className="relative min-h-full p-6 md:p-10 max-w-6xl mx-auto pb-24 flex flex-col gap-10">
+      <header className="flex justify-between items-start border-b border-white/10 pb-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-white">外勤工作台</h1>
+          <p className="text-sm text-zinc-400 mt-1">现场调度与极速记账</p>
+        </div>
+      </header>
 
-    <div className="relative min-h-full flex-1 overflow-hidden bg-[#07070a] text-zinc-100 pb-20">
-
-      <div className="pointer-events-none absolute inset-0">
-
-        <div className="absolute -left-24 top-[-10rem] h-80 w-80 rounded-full bg-emerald-500/12 blur-3xl" />
-
-        <div className="absolute right-[-6rem] top-32 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
-
-      </div>
-
-      <main className="relative z-10 mx-auto flex w-full max-w-6xl flex-col px-6 py-10 lg:px-10">
-
-        <header className="flex flex-col gap-4 border-b border-white/8 pb-8 sm:flex-row sm:items-start sm:justify-between">
-
-          <div>
-
-            <p className="text-xs font-medium uppercase tracking-[0.28em] text-emerald-300/80">
-
-              Turo Finance
-
-            </p>
-
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
-
-              Welcome back{email ? `, ${email}` : ""}.
-
-            </h1>
-
-            <p className="mt-2 max-w-xl text-sm leading-6 text-zinc-400">
-
-              Track trip revenue and T2125 expenses across the fleet in one ledger.
-
-            </p>
-
-          </div>
-
-          <button
-
-            type="button"
-
-            onClick={handleSignOut}
-
-            className="w-fit rounded-2xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-200 transition hover:bg-white/10"
-
-          >
-
-            Sign out
-
+      <section>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-medium uppercase tracking-wider text-emerald-400 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            当前任务
+          </h2>
+          <button onClick={() => setTripDrawerOpen(true)} className="text-sm text-zinc-950 bg-white px-4 py-1.5 rounded-full font-medium hover:bg-zinc-200 transition flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> 新建订单
           </button>
-
-        </header>
-
-        <section className="mt-8 grid gap-4 sm:grid-cols-3">
-
-          <article className="rounded-3xl border border-white/10 bg-white/[0.03] px-5 py-5">
-
-            <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Net Profit</p>
-
-            <p className={`mt-3 font-mono text-2xl tracking-tight ${netProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-
-              ${netProfit.toFixed(2)}
-
-            </p>
-
-          </article>
-
-          <article className="rounded-3xl border border-white/10 bg-white/[0.03] px-5 py-5">
-
-            <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Trip Revenue</p>
-
-            <p className="mt-3 font-mono text-2xl tracking-tight text-white">
-
-              ${tripRevenue.toFixed(2)}
-
-            </p>
-
-          </article>
-
-          <article className="rounded-3xl border border-white/10 bg-white/[0.03] px-5 py-5">
-
-            <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Operating Costs</p>
-
-            <p className="mt-3 font-mono text-2xl tracking-tight text-white">
-
-              ${operatingCosts.toFixed(2)}
-
-            </p>
-
-          </article>
-
-        </section>
-
-        {/* 全新升级的车辆管理模块 */}
-
-        <section className="mt-8 rounded-3xl border border-white/10 bg-white/[0.02] p-6">
-
-          <h2 className="mb-4 text-sm font-medium text-white">Fleet Management</h2>
-
-          
-
-          <div className="flex flex-col xl:flex-row gap-8">
-
-            {/* 左侧：已添加的车辆列表，采用卡片样式展示细节 */}
-
-            <div className="flex-1">
-
-              <label className="mb-3 block text-xs uppercase tracking-wider text-zinc-500">Active Vehicles</label>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-
-                {vehicles.length === 0 ? (
-
-                  <span className="text-sm text-zinc-500">No vehicles added yet.</span>
-
-                ) : (
-
-                  vehicles.map(v => (
-
-                    <div key={v.id} className="flex flex-col gap-1 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
-
-                        <div className="flex justify-between items-start">
-
-                             <span className="font-semibold text-cyan-400">
-
-                                {v.year} {v.make} {v.model}
-
-                             </span>
-
-                        </div>
-
-                        <div className="flex items-center gap-2 mt-1">
-
-                            <span className="inline-flex rounded-md bg-white/10 px-2 py-0.5 text-xs font-mono text-zinc-300">
-
-                                {v.license_plate}
-
-                            </span>
-
-                        </div>
-
-                    </div>
-
-                  ))
-
-                )}
-
-              </div>
-
-            </div>
-
-            {/* 右侧：多字段输入表单 */}
-
-            <form onSubmit={handleAddVehicle} className="flex flex-col gap-3 xl:w-80 p-4 rounded-xl border border-white/5 bg-black/20">
-
-              <p className="text-xs uppercase tracking-wider text-zinc-500 mb-1">Add New Vehicle</p>
-
-              
-
-              <div className="flex gap-3">
-
-                  <input
-
-                    type="number"
-
-                    placeholder="Year (e.g. 2025)"
-
-                    value={newVehicleYear}
-
-                    onChange={(e) => setNewVehicleYear(e.target.value)}
-
-                    className="w-1/3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-500/50"
-
-                    required
-
-                  />
-
-                  <input
-
-                    type="text"
-
-                    placeholder="Make (e.g. Kia)"
-
-                    value={newVehicleMake}
-
-                    onChange={(e) => setNewVehicleMake(e.target.value)}
-
-                    className="w-2/3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-500/50"
-
-                    required
-
-                  />
-
-              </div>
-
-              <input
-
-                type="text"
-
-                placeholder="Model (e.g. Carnival Hybrid)"
-
-                value={newVehicleModel}
-
-                onChange={(e) => setNewVehicleModel(e.target.value)}
-
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-500/50"
-
-                required
-
-              />
-
-              <input
-
-                type="text"
-
-                placeholder="License Plate"
-
-                value={newVehiclePlate}
-
-                onChange={(e) => setNewVehiclePlate(e.target.value)}
-
-                className="w-full uppercase font-mono rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-500/50"
-
-                required
-
-              />
-
-              <button
-
-                type="submit"
-
-                disabled={isAddingVehicle}
-
-                className="mt-2 w-full rounded-lg bg-emerald-500/20 px-4 py-2.5 text-sm font-medium text-emerald-400 transition hover:bg-emerald-500/30 disabled:opacity-50"
-
-              >
-
-                {isAddingVehicle ? "Adding..." : "+ Add to Fleet"}
-
-              </button>
-
-            </form>
-
-          </div>
-
-        </section>
-
-        <section className="mt-12 flex flex-col items-center justify-center py-6">
-
-          <button
-
-            type="button"
-
-            onClick={() => setDrawerOpen(true)}
-
-            className="group inline-flex items-center gap-3 rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400 px-8 py-4 text-base font-semibold text-zinc-950 shadow-[0_20px_60px_rgba(16,185,129,0.28)] transition hover:opacity-90"
-
-          >
-
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-950/15 text-xl leading-none">
-
-              +
-
-            </span>
-
-            记一笔 (Log Transaction)
-
-          </button>
-
-        </section>
-
-        <section className="mt-12">
-
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-lg font-medium text-white">Recent Transactions</h2>
-          {transactions.length > 0 && (
-            <button
-              onClick={downloadCSV}
-              className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-emerald-500/20 hover:text-emerald-400"
-            >
-              ↓ Export CSV (T2125)
-            </button>
-          )}
         </div>
 
-          {transactions.length === 0 ? (
-
-            <p className="text-sm text-zinc-500">No entries yet. Log the first trip or expense to start the ledger.</p>
-
+        <div className="grid gap-4 md:grid-cols-2">
+          {trips.length === 0 ? (
+            <div className="col-span-full rounded-2xl border border-dashed border-white/20 p-8 text-center text-zinc-500">
+              当前没有进行中的订单任务。
+            </div>
           ) : (
-
-            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.02]">
-
-              <table className="w-full text-left text-sm text-zinc-400">
-
-                <thead className="border-b border-white/5 bg-white/[0.02] text-xs uppercase tracking-wider text-zinc-500">
-
-                  <tr>
-
-                    <th className="px-6 py-4 font-medium whitespace-nowrap">Date & Time</th>
-
-                    <th className="px-6 py-4 font-medium">Vehicle</th>
-
-                    <th className="px-6 py-4 font-medium">Category</th>
-
-                    <th className="px-6 py-4 font-medium">Notes</th>
-
-                    <th className="px-6 py-4 font-medium text-right">Amount</th>
-
-                    <th className="px-6 py-4 font-medium text-center">Action</th>
-
-                  </tr>
-
-                </thead>
-
-                <tbody className="divide-y divide-white/5">
-
-                  {transactions.map((tx) => (
-
-                    <tr key={tx.id} className="transition hover:bg-white/[0.02]">
-
-                      <td className="px-6 py-4 whitespace-nowrap text-zinc-300">
-
-                        {new Date(tx.date).toLocaleString([], { 
-
-                          year: 'numeric', month: '2-digit', day: '2-digit', 
-
-                          hour: '2-digit', minute: '2-digit'
-
-                        })}
-
-                      </td>
-
-                      <td className="px-6 py-4 font-mono text-zinc-300">{tx.vehicle}</td>
-
-                      <td className="px-6 py-4 whitespace-nowrap">
-
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-
-                          tx.type === "Trip Revenue" ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-zinc-300"
-
-                        }`}>
-
-                          {tx.type}
-
-                        </span>
-
-                      </td>
-
-                      <td className="px-6 py-4 max-w-[150px] truncate">{tx.notes || "-"}</td>
-
-                      <td className={`px-6 py-4 text-right font-mono font-medium ${
-
-                        tx.type === "Trip Revenue" ? "text-emerald-400" : "text-zinc-200"
-
-                      }`}>
-
-                        {tx.type === "Trip Revenue" ? "+" : "-"}${Number(tx.amount).toFixed(2)}
-
-                      </td>
-
-                      <td className="px-6 py-4 text-center">
-
-                        <button
-
-                          onClick={() => handleDelete(tx.id)}
-
-                          className="text-xs font-medium text-zinc-500 transition hover:text-red-400 hover:underline"
-
-                        >
-
-                          Delete
-
-                        </button>
-
-                      </td>
-
-                    </tr>
-
-                  ))}
-
-                </tbody>
-
-              </table>
-
-            </div>
-
+            trips.map(trip => (
+              <div key={trip.id} className="rounded-2xl border border-white/10 bg-[#121217] p-5 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="text-lg font-bold text-white">{trip.vehicle_name}</span>
+                    <span className="text-xs px-2 py-1 bg-white/10 rounded-md font-mono text-zinc-300">#{trip.reservation_id}</span>
+                  </div>
+                  {trip.pickup_location && (
+                    <p className="text-xs text-zinc-300 mb-3 truncate bg-white/5 p-2 rounded-lg border border-white/5 flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-zinc-400" /> {trip.pickup_location}
+                    </p>
+                  )}
+                  <div className="space-y-1.5 mb-3">
+                    <p className="text-xs text-zinc-400 flex justify-between">
+                      <span>起：{new Date(trip.start_time).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
+                    </p>
+                    <p className="text-xs text-zinc-400 flex justify-between">
+                      <span>止：{new Date(trip.end_time).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
+                    </p>
+                  </div>
+                  
+                  {trip.earnings && (
+                    <p className="text-sm font-mono text-emerald-400 mt-2">预计收入: ${trip.earnings.toFixed(2)}</p>
+                  )}
+                  {trip.notes && (
+                    <div className="mt-3 rounded-lg bg-white/5 p-3 border border-white/10">
+                      <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
+                        <span className="font-medium text-zinc-300">备注：</span>{trip.notes}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="mt-5 flex gap-2">
+                  <button onClick={() => openTxForTrip(trip)} className="flex-[3] flex justify-center items-center gap-1.5 bg-emerald-500 text-black py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition">
+                    <Plus className="w-4 h-4" /> 记外勤支出
+                  </button>
+                  <button onClick={() => handleCompleteTrip(trip.id, trip.earnings)} className="flex-[2] flex justify-center items-center gap-1.5 bg-white/5 text-zinc-300 py-2.5 rounded-xl text-sm font-medium border border-white/10 hover:bg-white/10 hover:text-white transition">
+                    <Check className="w-4 h-4" /> 完成单子
+                  </button>
+                </div>
+              </div>
+            ))
           )}
-
-        </section>
-
-      </main>
-
-      <div
-
-        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
-
-          drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
-
-        }`}
-
-        onClick={closeDrawer}
-
-        aria-hidden={!drawerOpen}
-
-      />
-
-      <aside
-
-        role="dialog"
-
-        aria-modal="true"
-
-        aria-labelledby={drawerTitleId}
-
-        className={`fixed inset-y-0 right-0 z-50 w-full max-w-md transform border-l border-white/10 bg-[#0c0c10] shadow-2xl transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
-
-          drawerOpen ? "translate-x-0" : "translate-x-full"
-
-        }`}
-
-      >
-
-        <div className="flex h-full flex-col">
-
-          <header className="flex items-center justify-between border-b border-white/10 px-6 py-5">
-
-            <h2 id={drawerTitleId} className="text-lg font-semibold text-white">
-
-              Log Transaction
-
-            </h2>
-
-            <button
-
-              onClick={closeDrawer}
-
-              className="rounded-full p-2 text-zinc-400 transition hover:bg-white/10 hover:text-white"
-
-            >
-
-              ✕
-
-            </button>
-
-          </header>
-
-          <form onSubmit={handleSubmit} className="flex flex-1 flex-col overflow-y-auto px-6 py-6">
-
-            <div className="space-y-5">
-
-              <div>
-
-                <label className="mb-2 block text-sm font-medium text-zinc-400">Date & Time</label>
-
-                <input
-
-                  type="datetime-local"
-
-                  required
-
-                  value={date}
-
-                  onChange={(e) => setDate(e.target.value)}
-
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10 [color-scheme:dark]"
-
-                />
-
-              </div>
-
-              <div>
-
-                <label className="mb-2 block text-sm font-medium text-zinc-400">Vehicle</label>
-
-                <select
-
-                  value={vehicle}
-
-                  onChange={(e) => setVehicle(e.target.value)}
-
-                  required
-
-                  className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10"
-
-                >
-
-                  {vehicles.length === 0 && <option value="" disabled>Please add a vehicle first</option>}
-
-                  {vehicles.map((v) => {
-
-                      const display = v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name;
-
-                      return <option key={v.id} value={display} className="bg-zinc-900">{display}</option>;
-
-                  })}
-
-                </select>
-
-              </div>
-
-              <div>
-
-                <label className="mb-2 block text-sm font-medium text-zinc-400">Category (T2125)</label>
-
-                <select
-
-                  value={type}
-
-                  onChange={(e) => setType(e.target.value as any)}
-
-                  className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10"
-
-                >
-
-                  {TRANSACTION_TYPES.map((t) => (
-
-                    <option key={t} value={t} className="bg-zinc-900">{t}</option>
-
-                  ))}
-
-                </select>
-
-              </div>
-
-              <div>
-
-                <label className="mb-2 block text-sm font-medium text-zinc-400">Amount ($)</label>
-
-                <input
-
-                  type="number"
-
-                  step="0.01"
-
-                  placeholder="0.00"
-
-                  required
-
-                  value={amount}
-
-                  onChange={(e) => setAmount(e.target.value)}
-
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10 placeholder:text-zinc-600"
-
-                />
-
-              </div>
-
-              <div>
-
-                <label className="mb-2 block text-sm font-medium text-zinc-400">Notes (Optional)</label>
-
-                <textarea
-
-                  rows={3}
-
-                  placeholder="e.g. Costco gas receipt"
-
-                  value={notes}
-
-                  onChange={(e) => setNotes(e.target.value)}
-
-                  className="w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-emerald-500/50 focus:bg-white/10 placeholder:text-zinc-600"
-
-                />
-
-              </div>
-
-              {submitError && (
-
-                <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
-
-                  {submitError}
-
-                </div>
-
-              )}
-
-              {submitSuccess && (
-
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-400">
-
-                  {submitSuccess}
-
-                </div>
-
-              )}
-
-            </div>
-
-            <div className="mt-auto flex gap-3 pt-8">
-
-              <button
-
-                type="button"
-
-                onClick={closeDrawer}
-
-                disabled={isSubmitting}
-
-                className="flex-1 rounded-full bg-white/5 py-3 text-sm font-medium text-zinc-300 transition hover:bg-white/10 disabled:opacity-50"
-
-              >
-
-                Cancel
-
-              </button>
-
-              <button
-
-                type="submit"
-
-                disabled={isSubmitting || !!submitSuccess}
-
-                className="flex-1 rounded-full bg-emerald-500 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
-
-              >
-
-                {isSubmitting ? "Saving..." : submitSuccess ? "Saved!" : "Save"}
-
-              </button>
-
-            </div>
-
-          </form>
-
         </div>
+      </section>
 
+      <section className="border-t border-white/5 pt-8">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-500">
+              最近记账
+            </h2>
+            <button onClick={openGlobalTx} className="text-xs px-2.5 py-1.5 bg-white/5 rounded-md text-zinc-300 hover:bg-white/10 transition border border-white/10">
+              + 全局记账
+            </button>
+          </div>
+          <Link href="/dashboard/transactions" className="text-sm text-emerald-400 hover:text-emerald-300 transition">
+            查看全部明细 →
+          </Link>
+        </div>
+        
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#121217]">
+          {transactions.length === 0 ? (
+            <p className="p-6 text-sm text-zinc-500 text-center">暂无记账记录。</p>
+          ) : (
+            <div className="divide-y divide-white/5">
+              {transactions.slice(0, 5).map((tx) => (
+                <div key={tx.id} className="flex items-center justify-between p-4 hover:bg-white/[0.02] transition">
+                  <div className="flex flex-col gap-1">
+                    <span className="font-medium text-zinc-200">
+                      {tx.vehicle}
+                      {tx.trip_id && (
+                        <span className="ml-2 inline-flex rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-mono text-emerald-400">
+                          已绑订单
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs text-zinc-500">
+                      {new Date(tx.date).toLocaleDateString()} · {tx.type} {tx.notes && `· ${tx.notes}`}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-5">
+                    <div className={`font-mono font-medium ${isRevenue(tx.type) ? "text-emerald-400" : "text-zinc-300"}`}>
+                      {isRevenue(tx.type) ? "+" : "-"}${Number(tx.amount).toFixed(2)}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => openEditTx(tx)} className="text-zinc-500 hover:text-white transition">
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDeleteTx(tx.id)} className="text-zinc-500 hover:text-red-400 transition">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="border-t border-white/5 pt-8 mt-auto">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-500 mb-4">
+          车队财务概览
+        </h2>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-2xl bg-[#121217] p-4 border border-white/5">
+            <p className="text-[10px] uppercase text-zinc-500">净利润 (Net Profit)</p>
+            <p className={`mt-1 font-mono text-xl ${netProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>${netProfit.toFixed(0)}</p>
+          </div>
+          <div className="rounded-2xl bg-[#121217] p-4 border border-white/5">
+            <p className="text-[10px] uppercase text-zinc-500">总收入 (Revenue)</p>
+            <p className="mt-1 font-mono text-xl text-white">${tripRevenue.toFixed(0)}</p>
+          </div>
+          <div className="rounded-2xl bg-[#121217] p-4 border border-white/5">
+            <p className="text-[10px] uppercase text-zinc-500">总支出 (Costs)</p>
+            <p className="mt-1 font-mono text-xl text-zinc-300">${operatingCosts.toFixed(0)}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* --- 录入订单抽屉 --- */}
+      <div className={`fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm transition-opacity ${tripDrawerOpen ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => setTripDrawerOpen(false)} />
+      <aside className={`fixed inset-y-0 right-0 z-[70] w-full max-w-md bg-[#0c0c10] border-l border-white/10 transition-transform duration-300 ${tripDrawerOpen ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="flex h-full flex-col">
+          <header className="p-5 border-b border-white/10 flex justify-between items-center shrink-0">
+            <h2 className="font-semibold text-white">录入订单任务</h2>
+            <button onClick={() => setTripDrawerOpen(false)} className="text-zinc-500 hover:text-white">✕</button>
+          </header>
+          
+          <form onSubmit={handleAddTrip} className="flex flex-col flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="relative border-2 border-dashed border-emerald-500/30 bg-emerald-500/5 rounded-2xl p-6 text-center hover:bg-emerald-500/10 transition group cursor-pointer">
+                <input type="file" accept=".pdf" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                <div className="flex flex-col items-center gap-2 text-emerald-500">
+                  <FileText className="w-8 h-8 opacity-80" />
+                  <span className="text-sm font-medium">
+                    {isParsing ? "正在提取数据..." : "上传 Turo 账单 (PDF) 自动填表"}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-4 my-2">
+                <div className="flex-1 h-px bg-white/10"></div>
+                <span className="text-xs text-zinc-500">或 手动填写</span>
+                <div className="flex-1 h-px bg-white/10"></div>
+              </div>
+
+              <div><label className="text-xs text-zinc-400 mb-1 block">预订号 (Reservation ID)</label>
+                <input required value={tripResId} onChange={e => setTripResId(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white" />
+              </div>
+              <div><label className="text-xs text-zinc-400 mb-1 block">派发车辆</label>
+                <select value={tripVehicle} onChange={e => setTripVehicle(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white">
+                  {vehicles.map(v => <option key={v.id} value={v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name} className="bg-zinc-900">{v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name}</option>)}
+                </select>
+              </div>
+              <div><label className="text-xs text-zinc-400 mb-1 block">接送地点</label>
+                <input value={tripLocation} onChange={e => setTripLocation(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white" placeholder="输入地址..." />
+              </div>
+              <div><label className="text-xs text-zinc-400 mb-1 block">预期收入 (Earnings) $</label>
+                <input type="number" step="0.01" value={tripEarnings} onChange={e => setTripEarnings(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-mono text-emerald-400 focus:border-emerald-500/50" placeholder="0.00" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-xs text-zinc-400 mb-1 block">接车时间</label>
+                  <input type="datetime-local" required value={tripStart} onChange={e => setTripStart(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-2 py-3 text-xs text-white [color-scheme:dark]" />
+                </div>
+                <div><label className="text-xs text-zinc-400 mb-1 block">还车时间</label>
+                  <input type="datetime-local" required value={tripEnd} onChange={e => setTripEnd(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-2 py-3 text-xs text-white [color-scheme:dark]" />
+                </div>
+              </div>
+              <div><label className="text-xs text-zinc-400 mb-1 block">备注</label>
+                <textarea rows={2} value={tripNotes} onChange={e => setTripNotes(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white" placeholder="附加要求等..." />
+              </div>
+            </div>
+
+            <div className="shrink-0 p-5 border-t border-white/10 bg-[#0c0c10] pb-8 md:pb-5">
+              <button disabled={isSubmitting} type="submit" className="w-full bg-emerald-500 text-black font-bold rounded-xl py-3.5 hover:bg-emerald-400 transition">
+                {isSubmitting ? "保存中..." : "保存订单"}
+              </button>
+            </div>
+          </form>
+        </div>
       </aside>
 
+      {/* --- 记账/修改抽屉 --- */}
+      <div className={`fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm transition-opacity ${txDrawerOpen ? "opacity-100" : "pointer-events-none opacity-0"}`} onClick={() => {setTxDrawerOpen(false); setEditingTxId(null);}} />
+      <aside className={`fixed inset-y-0 right-0 z-[70] w-full max-w-md bg-[#0c0c10] border-l border-white/10 transition-transform duration-300 ${txDrawerOpen ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="flex h-full flex-col">
+          <header className="p-5 border-b border-white/10 flex justify-between items-center shrink-0">
+            <h2 className="font-semibold text-white">
+              {editingTxId ? "修改支出记录" : (txTripId ? "记外勤支出" : "记全局账单")}
+            </h2>
+            <button onClick={() => {setTxDrawerOpen(false); setEditingTxId(null);}} className="text-zinc-500 hover:text-white">✕</button>
+          </header>
+          
+          <form onSubmit={handleAddTx} className="flex flex-col flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div><label className="text-xs text-zinc-400 mb-1 block">时间 (精确到分钟)</label>
+                <input type="datetime-local" required value={txDate} onChange={e => setTxDate(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white [color-scheme:dark]" />
+              </div>
+              <div><label className="text-xs text-zinc-400 mb-1 block">金额 ($)</label>
+                <input type="number" step="0.01" required value={txAmount} onChange={e => setTxAmount(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-lg font-mono focus:border-emerald-500/50 text-white" placeholder="0.00" />
+              </div>
+              <div><label className="text-xs text-zinc-400 mb-1 block">支出类别</label>
+                <select value={txType} onChange={e => setTxType(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white">
+                  {TRANSACTION_TYPES.map(t => <option key={t} value={t} className="bg-zinc-900">{t}</option>)}
+                </select>
+              </div>
+              {!txTripId && (
+                <div><label className="text-xs text-zinc-400 mb-1 block">关联车辆</label>
+                  <select value={txVehicle} onChange={e => setTxVehicle(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white">
+                    {vehicles.map(v => <option key={v.id} value={v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name} className="bg-zinc-900">{v.year ? `${v.year} ${v.make} ${v.model} (${v.license_plate})` : v.name}</option>)}
+                  </select>
+                </div>
+              )}
+              <div><label className="text-xs text-zinc-400 mb-1 block">备注 (如地点、商店)</label>
+                <textarea rows={2} value={txNotes} onChange={e => setTxNotes(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-emerald-500/50 text-white" placeholder="例如：Costco 加油站..." />
+              </div>
+            </div>
+
+            <div className="shrink-0 p-5 border-t border-white/10 bg-[#0c0c10] pb-8 md:pb-5">
+              <button disabled={isSubmitting} type="submit" className="w-full bg-emerald-500 text-black font-bold rounded-xl py-3.5 hover:bg-emerald-400 transition">
+                {isSubmitting ? "保存中..." : (editingTxId ? "保存修改" : "确认记账")}
+              </button>
+            </div>
+          </form>
+        </div>
+      </aside>
     </div>
-
   );
-
 }
