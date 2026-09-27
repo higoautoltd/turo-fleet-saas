@@ -1,0 +1,55 @@
+{
+    "HomePage": {
+      "nav": {
+        "language": "简体中文",
+        "fleet": "我们的车队",
+        "whyUs": "核心优势"
+      },
+      "hero": {
+        "badge": "温哥华首屈一指的 Turo 车队",
+        "titleMain": "纵情驰骋。",
+        "titleHighlight": "体验非凡旅程。",
+        "description": "温哥华最可靠、最具性价比的租车选择。从宽敞的家庭 SUV 到灵活的城市代步车，通过 Turo 即刻预订，享受全额保险。"
+      },
+      "advantages": {
+        "handoff": {
+          "title": "极速交车",
+          "desc": "快速无缝的取车流程，告别排队与等待。"
+        },
+        "booking": {
+          "title": "轻松预订",
+          "desc": "通过 Turo 100% 数字化预订，手机搞定一切。"
+        },
+        "value": {
+          "title": "极致性价比",
+          "desc": "极具竞争力的日租价格，零隐藏车行费用。"
+        },
+        "diverse": {
+          "title": "丰富车型",
+          "desc": "精心维护的各类车型，满足您的每一个出行场景。"
+        }
+      },
+      "fleet": {
+        "category1": "SUV 与 全轮驱动",
+        "category2": "家庭与 MPV",
+        "category3": "经济型轿车",
+        "types": {
+          "popularSuv": "热门 SUV",
+          "reliableAwd": "可靠四驱",
+          "rugged4x4": "硬派越野",
+          "spaciousSuv": "宽敞 SUV",
+          "luxuryMpv": "豪华商务",
+          "sevenSeater": "七座首选",
+          "fuelEfficient": "省油利器",
+          "cityCommuter": "城市通勤"
+        },
+        "from": "起步价",
+        "perDay": "/天",
+        "bookBtn": "在 Turo 上预订"
+      },
+      "footer": {
+        "copyright": "© {year} HIGO AUTO LTD. 保留所有权利。",
+        "portal": "员工后台"
+      }
+    }
+  }

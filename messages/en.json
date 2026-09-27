@@ -1,0 +1,55 @@
+{
+    "HomePage": {
+      "nav": {
+        "language": "English",
+        "fleet": "Our Fleet",
+        "whyUs": "Why Us"
+      },
+      "hero": {
+        "badge": "Vancouver's Premium Turo Fleet",
+        "titleMain": "Hit the Road.",
+        "titleHighlight": "Experience the Extraordinary.",
+        "description": "Vancouver’s most reliable and cost-effective car rental fleet. From spacious family SUVs to nimble city commuters, book instantly via Turo with full insurance coverage."
+      },
+      "advantages": {
+        "handoff": {
+          "title": "Instant Handoff",
+          "desc": "Quick and seamless pickup process. No long lines, no waiting."
+        },
+        "booking": {
+          "title": "Easy Booking",
+          "desc": "100% digital booking via Turo. Manage everything on your phone."
+        },
+        "value": {
+          "title": "Best Value",
+          "desc": "Highly competitive daily rates with zero hidden dealership fees."
+        },
+        "diverse": {
+          "title": "Diverse Fleet",
+          "desc": "A perfect vehicle for every occasion, meticulously maintained."
+        }
+      },
+      "fleet": {
+        "category1": "SUVs & All-Wheel Drive",
+        "category2": "Family & Minivans",
+        "category3": "Economy & Sedans",
+        "types": {
+          "popularSuv": "Popular SUV",
+          "reliableAwd": "Reliable AWD",
+          "rugged4x4": "Rugged 4x4",
+          "spaciousSuv": "Spacious SUV",
+          "luxuryMpv": "Luxury MPV",
+          "sevenSeater": "7-Seater",
+          "fuelEfficient": "Fuel Efficient",
+          "cityCommuter": "City Commuter"
+        },
+        "from": "From",
+        "perDay": "/day",
+        "bookBtn": "Book on Turo"
+      },
+      "footer": {
+        "copyright": "© {year} HIGO AUTO LTD. ALL RIGHTS RESERVED.",
+        "portal": "EMPLOYEE PORTAL"
+      }
+    }
+  }
